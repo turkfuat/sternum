@@ -1,0 +1,638 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[5]:
+
+
+get_ipython().system('pip install split-folders matplotlib opencv-python spicy')
+
+
+# In[6]:
+
+
+import random
+import numpy as np
+import cv2 as cv
+import os
+import splitfolders
+import matplotlib.pyplot as plt
+
+import tensorflow.keras as keras
+import tensorflow as tf
+
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.preprocessing.image import ImageDataGenerator, load_img
+
+from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications.efficientnet import preprocess_input, decode_predictions
+from tensorflow.keras.applications.efficientnet import EfficientNetB3
+
+
+# In[7]:
+
+
+class_names = ['Altımısbesustu', 'Ellibir-Altmısbes', 'Otuzaltı-Elli', 'Yirmi-Otuzbes']
+
+
+# In[8]:
+
+
+datagen = ImageDataGenerator()
+
+
+# In[9]:
+
+
+# training data
+train_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum2/train", 
+    classes = class_names,
+    target_size=(224, 224),  
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[10]:
+
+
+# validation data
+valid_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum2/val", 
+    classes = class_names,
+    target_size=(224, 224), 
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[11]:
+
+
+# test data
+test_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum2/test", 
+    classes = class_names,
+    target_size=(224, 224), 
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[12]:
+
+
+pre_trained_model = EfficientNetB3(input_shape = (224, 224, 3), # Shape of our images
+                                include_top = False, # Leave out the last fully connected layer
+                                weights = 'imagenet')
+
+
+# In[13]:
+
+
+x = pre_trained_model.output
+x = tf.keras.layers.GlobalAveragePooling2D()(x)
+x = tf.keras.layers.Dense(1024, activation=tf.nn.relu)(x)
+x = tf.keras.layers.BatchNormalization()(x)
+x = tf.keras.layers.Dense(512, activation=tf.nn.relu)(x)
+x = tf.keras.layers.BatchNormalization()(x)
+x = tf.keras.layers.Dense(256, activation=tf.nn.relu)(x)
+x = tf.keras.layers.BatchNormalization()(x)
+x = tf.keras.layers.Dense(128, activation=tf.nn.relu)(x)
+x = tf.keras.layers.Dense(4, activation=tf.nn.softmax)(x)
+
+model = Model(pre_trained_model.input, x)
+
+
+# In[14]:
+
+
+# define training function
+def trainModel(model, epochs, optimizer, batch_size):
+    model.compile(optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"])
+    return model.fit(train_generator, validation_data=valid_generator, epochs=epochs, batch_size=batch_size)
+
+
+# In[15]:
+
+
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+  # Restrict TensorFlow to only use the first GPU
+  try:
+    tf.config.set_visible_devices(gpus[0], 'GPU')
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
+  except RuntimeError as e:
+    # Visible devices must be set before GPUs have been initialized
+    print(e)
+
+
+# In[16]:
+
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+from tensorflow.python.client import device_lib
+
+print(device_lib.list_local_devices())
+
+
+# In[17]:
+
+
+model_history = trainModel(model = model, epochs = 50, optimizer = "Adam", batch_size = 16)
+
+
+# In[18]:
+
+
+loss_train_curve = model_history.history["loss"]
+loss_val_curve = model_history.history["val_loss"]
+plt.plot(loss_train_curve, label = "Train")
+plt.plot(loss_val_curve, label = "Validation")
+plt.legend(loc = 'upper right')
+plt.title("Loss")
+plt.show()
+
+
+# In[19]:
+
+
+acc_train_curve = model_history.history["accuracy"]
+acc_val_curve = model_history.history["val_accuracy"]
+plt.plot(acc_train_curve, label = "Train")
+plt.plot(acc_val_curve, label = "Validation")
+plt.legend(loc = 'lower right')
+plt.title("Accuracy")
+plt.show()
+
+
+# In[20]:
+
+
+test_loss, test_acc = model.evaluate(test_generator)
+print("The test loss is: ", test_loss)
+print("The best accuracy is: ", test_acc*100)
+
+
+# In[21]:
+
+
+test_dir = 'D:\\sternum2/test'
+image_gen_test = ImageDataGenerator(rescale=1./255)
+test_data_gen = image_gen_test.flow_from_directory(batch_size=32, directory=test_dir,
+target_size=(224, 224), class_mode='categorical')
+
+
+# In[22]:
+
+
+# define classes name
+class_names = ['Altımısbesustu', 'Ellibir-Altmısbes', 'Otuzaltı-Elli', 'Yirmi-Otuzbes']
+
+# initialize a list to store the predictions
+predictions_list = []
+
+# loop over each class folder
+for class_name in class_names:
+
+    # set the path to the current class folder
+    class_dir = os.path.join(test_dir, class_name)
+
+    # initialize a list to store the image paths
+    image_paths = []
+
+    # loop over the first 5 images in the current class folder
+    image_names = random.sample(os.listdir(class_dir), k=5)
+    image_paths = [os.path.join(class_dir, img) for img in image_names]
+
+    # load the images and convert them to numpy arrays
+    images = []
+    for image_path in image_paths:
+        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(224, 224))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        images.append(img_array)
+    images = np.array(images)
+
+    # generate predictions for the images
+    predictions = model.predict(images)
+
+    # generate argmax for predictions
+    class_ids = np.argmax(predictions, axis=1)
+
+    # transform classes number into classes name
+    predicted_classes = [class_names[class_id] for class_id in class_ids]
+
+    # store the predictions
+    predictions_list.append((class_name, image_paths, predicted_classes))
+
+# plot the predictions
+for class_name, image_paths, predicted_classes in predictions_list:
+    fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+    fig.suptitle(f'Predictions for {class_name} images')
+    for i, image_path in enumerate(image_paths):
+        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(224, 224))
+        axes[i].imshow(img)
+        axes[i].axis('off')
+        axes[i].set_title(f'Predicted class: {predicted_classes[i]}')
+    plt.show()
+
+
+# In[ ]:
+
+
+
+
+ENSEMBLE MODEL
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[3]:
+
+
+get_ipython().system('pip install split-folders matplotlib opencv-python spicy')
+
+
+# In[6]:
+
+
+import random
+import numpy as np
+import cv2 as cv
+import os
+import splitfolders
+import matplotlib.pyplot as plt
+
+import tensorflow.keras as keras
+import tensorflow as tf
+
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.preprocessing.image import ImageDataGenerator, load_img
+
+from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications.densenet import preprocess_input, decode_predictions
+from tensorflow.keras.applications.densenet import DenseNet121
+
+
+# In[9]:
+
+
+from random import random, seed, randint
+import shutil
+import matplotlib.pyplot as plt
+from matplotlib.image import imread
+from keras.preprocessing.image import ImageDataGenerator
+from keras.models import Sequential, load_model
+from keras.layers import Dense, Dropout, Flatten, BatchNormalization, GlobalAveragePooling2D
+from keras.applications import resnet, inception_v3, efficientnet
+from keras.callbacks import ModelCheckpoint
+from keras.metrics import Precision, Recall
+from keras.optimizers import Adam, RMSprop
+from keras.utils import img_to_array, array_to_img, load_img
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+
+
+# In[10]:
+
+
+class_names = ['Altımısbesustu', 'Ellibir-Altmısbes', 'Otuzaltı-Elli', 'Yirmi-Otuzbes']
+
+
+# In[11]:
+
+
+datagen = ImageDataGenerator()
+
+
+# In[12]:
+
+
+# training data
+train_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum1/train", 
+    classes = class_names,
+    target_size=(224, 224),  
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[13]:
+
+
+# validation data
+valid_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum1/val", 
+    classes = class_names,
+    target_size=(224, 224), 
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[14]:
+
+
+# test data
+test_generator = datagen.flow_from_directory( 
+    directory="D:\\sternum1/test", 
+    classes = class_names,
+    target_size=(224, 224), 
+    batch_size=16, 
+    class_mode="categorical", 
+)
+
+
+# In[26]:
+
+
+pre_trained_model = DenseNet(input_shape = (224, 224, 3), # Shape of our images
+                                include_top = False, # Leave out the last fully connected layer
+                                weights = 'imagenet')
+
+
+# In[29]:
+
+
+# ResNet50
+def ResNet50_TL():
+    model = Sequential()
+    model.add(resnet.ResNet50(include_top=False, pooling='max', weights='imagenet', input_shape=(224, 224, 3)))
+    model.add(BatchNormalization())
+    model.add(Dropout(rate=0.3))
+    model.add(Dense(4, activation='softmax', kernel_initializer='he_uniform'))
+    model.layers[0].trainable = False
+    opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-7)
+    model.compile(optimizer=opt, loss='categorical_crossentropy',\
+                 metrics=['accuracy', Precision(thresholds=0.5), Recall(thresholds=0.5)])
+    return model
+
+# InceptionV3
+def InceptionV3_TL():
+    model = Sequential()
+    model.add(inception_v3.InceptionV3(include_top=False, pooling='max', weights='imagenet', input_shape=(224, 224, 3)))
+    model.add(BatchNormalization())
+    model.add(Dropout(rate=0.3))
+    model.add(Dense(4, activation='softmax', kernel_initializer='he_uniform'))
+    model.layers[0].trainable = False
+    opt = RMSprop(learning_rate=0.0001, rho=0.9, epsilon=1e-7)
+    model.compile(optimizer=opt, loss='categorical_crossentropy',\
+                 metrics=['accuracy', Precision(thresholds=0.5), Recall(thresholds=0.5)])
+    return model
+
+# EfficientNetB7
+def EfficientNetB7_TL():
+    model = Sequential()
+    model.add(efficientnet.EfficientNetB7(include_top=False, weights='imagenet', input_shape=(224, 224, 3)))
+    model.add(GlobalAveragePooling2D())
+    model.add(BatchNormalization())
+    model.add(Dropout(rate=0.3))
+    model.add(Dense(4, activation='softmax', kernel_initializer='he_uniform'))
+    model.layers[0].trainable = False
+    opt = Adam(learning_rate=0.0001, beta_1=0.9, beta_2=0.999, epsilon=1e-7)
+    model.compile(optimizer=opt, loss='categorical_crossentropy',\
+                 metrics=['accuracy', Precision(thresholds=0.5), Recall(thresholds=0.5)])
+    return model
+
+
+# In[30]:
+
+
+working_dir = 'D:\\sternum1/train/'
+
+
+# In[31]:
+
+
+def summarize_diagnostics(history, plot_file):
+    plt.subplot(2, 2, 1)
+    plt.title('Cross-entropy loss')
+    plt.plot(history.history['loss'], color='blue', label='train')
+    plt.plot(history.history['val_loss'], color='orange', label='validation')
+    plt.legend(loc='best')
+    plt.subplot(2, 2, 2)
+    plt.title('Accuracy')
+    plt.plot(history.history['accuracy'], color='blue', label='train')
+    plt.plot(history.history['val_accuracy'], color='orange', label='validation')
+    plt.legend(loc='best')
+    plt.savefig(plot_file)
+    plt.show()
+
+
+# In[35]:
+
+
+def run_validation_harness(model, preprocess_config, model_name):
+    model.summary()    
+    # With Data Augmentation
+    train_datagen = ImageDataGenerator(rotation_range=10, zoom_range=0.1, horizontal_flip=True,\
+                                          fill_mode='nearest', width_shift_range=0.1,\
+                                          height_shift_range=0.1, preprocessing_function=preprocess_config.preprocess_input)
+    validate_datagen = ImageDataGenerator(preprocessing_function=preprocess_config.preprocess_input)
+    train_iterator = train_datagen.flow_from_directory(working_dir , class_mode='categorical',\
+                                                         batch_size=32, target_size=(224, 224))
+    validate_iterator = validate_datagen.flow_from_directory(working_dir , class_mode='categorical',\
+                                                         batch_size=32, target_size=(224, 224))
+    #save best weight
+    checkpoints = ModelCheckpoint(filepath=model_name + '_weights.hdf5', save_best_only=True,\
+                                 save_weights_only=True)
+    history = model.fit(train_iterator, validation_data=validate_iterator, epochs=50, verbose=2,\
+                       steps_per_epoch=len(train_iterator),\
+                        validation_steps=len(validate_iterator), callbacks=[checkpoints])
+    #model.save(model_name + '_model.h5')
+    loss, acc, precision, recall = model.evaluate(validate_iterator, verbose=2)
+    print('Loss: {}'.format(loss))
+    print('Accuracy: {}'.format(acc*100.0))
+    print('Precision: {}'.format(precision))
+    print('Recall: {}'.format(recall))
+    summarize_diagnostics(history, model_name + '_curves.png')
+    return model
+
+
+# In[37]:
+
+
+#run ResNet50 model
+resnet50_model = run_validation_harness(ResNet50_TL(), resnet, 'resnet50')
+
+
+# In[38]:
+
+
+#run InceptionV3 model
+inceptionV3_model = run_validation_harness(InceptionV3_TL(), inception_v3, 'inceptionV3')
+
+
+# In[39]:
+
+
+#run EfficientNetB7 model
+effnetB7_model = run_validation_harness(EfficientNetB7_TL(), efficientnet, 'efficientnetB7')
+
+
+# In[40]:
+
+
+resnet50_model.load_weights('resnet50_weights.hdf5')
+inceptionV3_model.load_weights('inceptionV3_weights.hdf5')
+effnetB7_model.load_weights('efficientnetB7_weights.hdf5')
+
+
+# In[41]:
+
+
+def preprocess_data(preprocess_config):
+    test_datagen = ImageDataGenerator(preprocessing_function=preprocess_config.preprocess_input)
+    test_iterator = test_datagen.flow_from_directory('D:\\sternum1/test/', class_mode='categorical',\
+                                                              shuffle=False, batch_size=32,\
+                                                              target_size=(224, 224))
+    return test_iterator
+
+
+# In[42]:
+
+
+all_y_preds = [model.predict(iterator) for model, iterator in \
+               zip([resnet50_model, inceptionV3_model, effnetB7_model],\
+                   [preprocess_data(resnet), preprocess_data(inception_v3), preprocess_data(efficientnet)])]
+
+
+# In[44]:
+
+
+all_y_preds = np.array(all_y_preds)
+sum_y_preds = np.sum(all_y_preds, axis=0)
+#Ensemble predictions
+test_ensemble_labels = np.argmax(sum_y_preds, axis=1)
+np.savetxt('ensemble_results_test.csv', test_ensemble_labels)
+
+
+# In[45]:
+
+
+#Ensemble prediction accuracy
+test_iterator = preprocess_data(resnet)
+np.mean(test_ensemble_labels == test_iterator.classes)
+
+
+# In[46]:
+
+
+conf_matrix = confusion_matrix(test_iterator.classes, test_ensemble_labels)
+plt.figure()
+sns.set(font_scale=1.1)
+ax = sns.heatmap(conf_matrix/np.sum(conf_matrix, axis=1), annot=True, fmt='.1%')
+ax.set_xlabel('Predicted Labels')
+ax.xaxis.set_ticklabels(list(test_iterator.class_indices.keys()), fontsize=10, rotation=40)
+ax.yaxis.set_ticklabels(list(test_iterator.class_indices.keys()), fontsize=10, rotation=0)
+ax.set_ylabel('Ground Truth')
+ax.set_title('Confusion Matrix for Nature Scene Detection (Ensemble)')
+plt.show()
+
+
+# In[47]:
+
+
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+  # Restrict TensorFlow to only use the first GPU
+  try:
+    tf.config.set_visible_devices(gpus[0], 'GPU')
+    logical_gpus = tf.config.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPU")
+  except RuntimeError as e:
+    # Visible devices must be set before GPUs have been initialized
+    print(e)
+
+
+# In[48]:
+
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+from tensorflow.python.client import device_lib
+
+print(device_lib.list_local_devices())
+
+
+# In[51]:
+
+
+test_dir = 'D:\\ysternum1/test'
+image_gen_test = ImageDataGenerator(rescale=1./255)
+test_data_gen = image_gen_test.flow_from_directory(batch_size=32, directory=test_dir,
+target_size=(224, 224), class_mode='categorical')
+
+
+# In[52]:
+
+
+# define classes name
+class_names = ['Altımısbesustu', 'Ellibir-Altmısbes', 'Otuzaltı-Elli', 'Yirmi-Otuzbes']
+
+# initialize a list to store the predictions
+predictions_list = []
+
+# loop over each class folder
+for class_name in class_names:
+
+    # set the path to the current class folder
+    class_dir = os.path.join(test_dir, class_name)
+
+    # initialize a list to store the image paths
+    image_paths = []
+
+    # loop over the first 5 images in the current class folder
+    image_names = random.sample(os.listdir(class_dir), k=5)
+    image_paths = [os.path.join(class_dir, img) for img in image_names]
+
+    # load the images and convert them to numpy arrays
+    images = []
+    for image_path in image_paths:
+        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(224, 224))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        images.append(img_array)
+    images = np.array(images)
+
+    # generate predictions for the images
+    predictions = model.predict(images)
+
+    # generate argmax for predictions
+    class_ids = np.argmax(predictions, axis=1)
+
+    # transform classes number into classes name
+    predicted_classes = [class_names[class_id] for class_id in class_ids]
+
+    # store the predictions
+    predictions_list.append((class_name, image_paths, predicted_classes))
+
+# plot the predictions
+for class_name, image_paths, predicted_classes in predictions_list:
+    fig, axes = plt.subplots(1, 5, figsize=(20, 4))
+    fig.suptitle(f'Predictions for {class_name} images')
+    for i, image_path in enumerate(image_paths):
+        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(224, 224))
+        axes[i].imshow(img)
+        axes[i].axis('off')
+        axes[i].set_title(f'Predicted class: {predicted_classes[i]}')
+    plt.show()
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+
